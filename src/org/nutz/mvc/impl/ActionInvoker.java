@@ -40,7 +40,10 @@ public class ActionInvoker {
     public void addChain(String httpMethod, ActionChain chain) {
         if (Strings.isBlank(httpMethod))
             throw Lang.makeThrow("chain need a valid HTTP Method, but is is '%s'", httpMethod);
-        chainMap.put(httpMethod.toUpperCase(), chain);
+        ActionChain old = chainMap.put(httpMethod.toUpperCase(), chain);
+        if (old != null) {
+            log.warnf("Duplicate @At mapping with same HttpMethod");
+        }
     }
 
     public void setDefaultChain(ActionChain defaultChain) {
@@ -66,19 +69,24 @@ public class ActionInvoker {
     }
 
     public ActionChain getActionChain(ActionContext ac) {
-        HttpServletRequest req = ac.getRequest();
-        String httpMethod = Strings.sNull(req.getMethod(), "GET").toUpperCase();
-        ActionChain chain = chainMap.get(httpMethod);
-        // 找到了特殊HTTP方法的处理动作链
-        if (null != chain) {
-            return chain;
+        String httpMethod = "";
+        if (!chainMap.isEmpty()) {
+            HttpServletRequest req = ac.getRequest();
+            httpMethod = Strings.sNull(req.getMethod(), "GET").toUpperCase();
+            ActionChain chain = chainMap.get(httpMethod);
+            // 找到了特殊HTTP方法的处理动作链
+            if (null != chain) {
+                return chain;
+            }
         }
         // 这个 URL 所有的HTTP方法用统一的动作链处理
-        else if (null != defaultChain) {
+        if (null != defaultChain) {
             return defaultChain;
+        }
+        if (chainMap.size() != 0 && log.isDebugEnabled()) {
+            log.debugf("Path=[%s] available methods%s but request [%s], using the wrong http method?", ac.getPath(), chainMap.keySet(), httpMethod);
         }
         // 否则将认为不能处理
         return null;
     }
-
 }

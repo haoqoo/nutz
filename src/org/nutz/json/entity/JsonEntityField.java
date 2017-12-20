@@ -4,6 +4,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
+import java.text.DecimalFormat;
+import java.text.Format;
 import java.text.SimpleDateFormat;
 
 import org.nutz.json.JsonField;
@@ -15,6 +17,7 @@ import org.nutz.lang.eject.EjectByGetter;
 import org.nutz.lang.eject.Ejecting;
 import org.nutz.lang.inject.InjectBySetter;
 import org.nutz.lang.inject.Injecting;
+import org.nutz.lang.reflect.ReflectTool;
 
 public class JsonEntityField {
 	
@@ -40,7 +43,11 @@ public class JsonEntityField {
     
     private boolean hasJsonIgnore;
     
-    private SimpleDateFormat dateFormat;
+    private Format dataFormat;
+    
+    private Mirror<?> mirror;
+    
+    private Class<?> declaringClass;
 
     public boolean isForceString() {
         return forceString;
@@ -61,15 +68,29 @@ public class JsonEntityField {
     /**
      * 根据名称获取字段实体, 默认以set优先
      */
-    public static JsonEntityField eval(String name, Method getter, Method setter) {
+    public static JsonEntityField eval(Mirror<?> mirror, String name, Method getter, Method setter) {
         JsonEntityField jef = new JsonEntityField();
-        jef.genericType = getter.getGenericReturnType();
+        jef.declaringClass = mirror.getType();
+        jef.setGenericType(getter.getGenericReturnType());
         jef.name = name;
         jef.ejecting = new EjectByGetter(getter);
         jef.injecting = new InjectBySetter(setter);
+        jef.mirror = Mirror.me(getter.getReturnType());
         return jef;
     }
 
+    public static JsonEntityField eval(Mirror<?> mirror, String name, Type type, Ejecting ejecting, Injecting injecting) {
+        JsonEntityField jef = new JsonEntityField();
+        jef.genericType = mirror.getType();
+        jef.setGenericType(type);
+        jef.name = name;
+        jef.ejecting = ejecting;
+        jef.injecting = injecting;
+        jef.mirror = Mirror.me(type);
+        return jef;
+    }
+
+    @SuppressWarnings({"deprecation", "rawtypes"})
     public static JsonEntityField eval(Mirror<?> mirror, Field fld) {
         if (fld == null) {
             return null;
@@ -85,10 +106,12 @@ public class JsonEntityField {
         JsonField jf = fld.getAnnotation(JsonField.class);
 
         JsonEntityField jef = new JsonEntityField();
-        jef.genericType = Lang.getFieldType(mirror, fld);
+        jef.declaringClass = mirror.getType();
+        jef.setGenericType(Lang.getFieldType(mirror, fld));
         jef.name = Strings.sBlank(null == jf ? null : jf.value(), fld.getName());
         jef.ejecting = mirror.getEjecting(fld.getName());
         jef.injecting = mirror.getInjecting(fld.getName());
+        jef.mirror = Mirror.me(fld.getType());
 
         // 瞬时变量和明确声明忽略的，变 ignore
         if (Modifier.isTransient(fld.getModifiers())
@@ -100,8 +123,17 @@ public class JsonEntityField {
         // 判断字段是否被强制输出为字符串
         if (null != jf) {
             jef.setForceString(jf.forceString());
-            if (!Strings.isBlank(jf.dateFormat())) {
-                jef.dateFormat = new SimpleDateFormat(jf.dateFormat());
+            String dataFormat = jf.dataFormat();
+            if(Strings.isBlank(dataFormat)){
+                dataFormat = jf.dateFormat();
+            }
+            if(!Strings.isBlank(dataFormat)){
+                Mirror jfmirror = Mirror.me(jef.genericType);
+                if(jfmirror.isNumber()){
+                    jef.dataFormat = new DecimalFormat(dataFormat);
+                }else if(jfmirror.isDateTimeLike()){
+                    jef.dataFormat = new SimpleDateFormat(dataFormat);
+                }
             }
         }
         
@@ -150,11 +182,19 @@ public class JsonEntityField {
         return val;
     }
     
-    public SimpleDateFormat getDateFormat() {
-        return dateFormat == null ? null : (SimpleDateFormat)dateFormat.clone();
+    public Format getDataFormat() {
+        return dataFormat == null ? null : (Format)dataFormat.clone();
     }
     
-    public boolean hasDateFormat() {
-        return dateFormat != null;
+    public boolean hasDataFormat() {
+        return dataFormat != null;
+    }
+    
+    public Mirror<?> getMirror() {
+        return mirror;
+    }
+    
+    public void setGenericType(Type genericType) {
+        this.genericType = ReflectTool.getInheritGenericType(declaringClass, genericType);;
     }
 }

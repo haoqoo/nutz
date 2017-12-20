@@ -1,11 +1,14 @@
 package org.nutz.dao.sql;
 
+import java.io.Serializable;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
 
 import org.nutz.dao.entity.Entity;
+import org.nutz.dao.jdbc.JdbcExpert;
 import org.nutz.dao.jdbc.ValueAdaptor;
 import org.nutz.dao.pager.Pager;
 
@@ -16,7 +19,7 @@ import org.nutz.dao.pager.Pager;
  * 
  * @author zozoh(zozohtnt@gmail.com)
  */
-public interface DaoStatement {
+public interface DaoStatement extends Serializable {
 
     /**
      * @return 当前语句是否是一个 SELECT 语句
@@ -135,11 +138,25 @@ public interface DaoStatement {
     Object getResult();
 
     /**
-     * <b>无结果的话,会抛NPE</b>
+     * <b>无结果的话,会抛NPE,可以考虑用getInt(defaultValue)</b>
      * 
      * @return 将结果对象作为 int 返回
      */
     int getInt();
+
+    int getInt(int defalutValue);
+
+    long getLong();
+
+    long getLong(long defaultValue);
+
+    double getDouble();
+
+    double getDouble(double defaultValue);
+
+    float getFloat();
+
+    float getFloat(float defaultValue);
     
     Number getNumber();
 
@@ -214,10 +231,11 @@ public interface DaoStatement {
      *            当前执行语句的连接
      * @param rs
      *            当前语句执行的结果集
+     * @param stmt TODO
      * @throws SQLException
      *             回调函数抛出的异常
      */
-    void onAfter(Connection conn, ResultSet rs) throws SQLException;
+    void onAfter(Connection conn, ResultSet rs, Statement stmt) throws SQLException;
 
     /**
      * 为自定义SQL设置Pager
@@ -233,4 +251,8 @@ public interface DaoStatement {
     void forceExecQuery();
     
     boolean isForceExecQuery();
+    
+    String forPrint();
+    
+    void setExpert(JdbcExpert expert);
 }

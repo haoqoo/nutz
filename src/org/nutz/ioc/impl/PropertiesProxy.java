@@ -1,5 +1,6 @@
 package org.nutz.ioc.impl;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
@@ -8,7 +9,7 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -16,13 +17,16 @@ import java.util.Properties;
 import org.nutz.castor.Castors;
 import org.nutz.lang.Files;
 import org.nutz.lang.Lang;
+import org.nutz.lang.Mirror;
 import org.nutz.lang.Streams;
 import org.nutz.lang.Strings;
+import org.nutz.lang.inject.Injecting;
 import org.nutz.lang.util.Disks;
 import org.nutz.lang.util.FileVisitor;
 import org.nutz.lang.util.MultiLineProperties;
 import org.nutz.log.Log;
 import org.nutz.log.Logs;
+import org.nutz.mapl.Mapl;
 import org.nutz.resource.NutResource;
 import org.nutz.resource.Scans;
 
@@ -34,7 +38,7 @@ import org.nutz.resource.Scans;
  * 
  * @since 1.b.37
  */
-public class PropertiesProxy {
+public class PropertiesProxy extends MultiLineProperties {
 
     private static final Log log = Logs.get();
 
@@ -43,10 +47,13 @@ public class PropertiesProxy {
     // 是否忽略无法加载的文件
     private boolean ignoreResourceNotFound = false;
 
-    private MultiLineProperties mp = new MultiLineProperties();
-
     public PropertiesProxy() {
         this(true);
+    }
+    
+    public PropertiesProxy(boolean utf8, String... paths) {
+        this(utf8);
+        this.setPaths(paths);
     }
 
     public PropertiesProxy(boolean utf8) {
@@ -61,11 +68,13 @@ public class PropertiesProxy {
     public PropertiesProxy(InputStream in) {
         this(true);
         try {
-            mp = new MultiLineProperties();
-            mp.load(new InputStreamReader(in));
+            load(new InputStreamReader(in));
         }
         catch (IOException e) {
             throw Lang.wrapThrow(e);
+        }
+        finally {
+            Streams.safeClose(in);
         }
     }
 
@@ -77,11 +86,13 @@ public class PropertiesProxy {
     public PropertiesProxy(Reader r) {
         this(true);
         try {
-            mp = new MultiLineProperties();
-            mp.load(r);
+            load(r);
         }
         catch (IOException e) {
             throw Lang.wrapThrow(e);
+        }
+        finally {
+            Streams.safeClose(r);
         }
     }
 
@@ -94,15 +105,16 @@ public class PropertiesProxy {
      *            需要加载的Properties文件路径
      */
     public void setPaths(String... paths) {
-        mp = new MultiLineProperties();
-
+        clear();
         try {
             List<NutResource> list = getResources(paths);
             if (utf8)
                 for (NutResource nr : list) {
+                    if (log.isDebugEnabled())
+                        log.debug("load properties from " + nr);
                     Reader r = nr.getReader();
                     try {
-                        mp.load(nr.getReader(), false);
+                        load(nr.getReader(), false);
                     }
                     finally {
                         Streams.safeClose(r);
@@ -111,15 +123,16 @@ public class PropertiesProxy {
             else {
                 Properties p = new Properties();
                 for (NutResource nr : list) {
-                    InputStream in = nr.getInputStream();
+                    // 用字符流来读取文件
+                    BufferedReader bf = new BufferedReader(new InputStreamReader(nr.getInputStream()));
                     try {
-                        p.load(nr.getInputStream());
+                        p.load(bf);
                     }
                     finally {
-                        Streams.safeClose(in);
+                        Streams.safeClose(bf);
                     }
                 }
-                mp.putAll(p);
+                putAll(p);
             }
         }
         catch (IOException e) {
@@ -165,11 +178,7 @@ public class PropertiesProxy {
      * @since 1.b.50
      */
     public boolean has(String key) {
-        return mp.containsKey(key);
-    }
-
-    public void put(String key, String value) {
-        mp.put(key, value);
+        return containsKey(key);
     }
 
     public PropertiesProxy set(String key, String val) {
@@ -195,26 +204,26 @@ public class PropertiesProxy {
         return Castors.me().castTo(val, Boolean.class);
     }
 
-    public String get(String key) {
-        return mp.get(key);
-    }
-
     public String get(String key, String defaultValue) {
-        return Strings.sNull(mp.get(key), defaultValue);
+        return Strings.sNull(get(key), defaultValue);
     }
 
     public List<String> getList(String key) {
+        return getList(key,"\n");
+    }
+
+    public List<String> getList(String key,String separatorChar) {
         List<String> re = new ArrayList<String>();
         String keyVal = get(key);
         if (Strings.isNotBlank(keyVal)) {
-            String[] vlist = Strings.splitIgnoreBlank(keyVal, "\n");
+            String[] vlist = Strings.splitIgnoreBlank(keyVal, separatorChar);
             for (String v : vlist) {
                 re.add(v);
             }
         }
         return re;
     }
-
+    
     public String trim(String key) {
         return Strings.trim(get(key));
     }
@@ -258,18 +267,16 @@ public class PropertiesProxy {
     }
 
     public List<String> getKeys() {
-        return mp.keys();
+        return keys();
     }
 
     public Collection<String> getValues() {
-        return mp.values();
+        return values();
     }
 
     public Properties toProperties() {
         Properties p = new Properties();
-        for (String key : mp.keySet()) {
-            p.put(key, mp.get(key));
-        }
+        p.putAll(this);
         return p;
     }
 
@@ -346,11 +353,35 @@ public class PropertiesProxy {
         finally {
             Streams.safeClose(r);
         }
-        this.mp.putAll(mp);
+        this.putAll(mp);
         return this;
     }
 
     public Map<String, String> toMap() {
-        return new HashMap<String, String>(mp);
+        return new LinkedHashMap<String, String>(this);
     }
+    
+    public String get(String key) {
+        return super.get(key);
+    }
+
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	public <T> T makeDeep(Class<T> klass, String prefix) {
+		Map map = this;
+		return (T) Mapl.maplistToObj(Lang.filter(map, prefix, null, null, null), klass);
+	}
+
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public <T> T make(Class<T> klass, String prefix) {
+		Map map = this;
+		Mirror<T> mirror = Mirror.me(klass);
+		T t = mirror.born();
+		map = Lang.filter(map, prefix, null, null, null);
+		for (Entry<String, Object> en : ((Map<String, Object>) map).entrySet()) {
+			String name = en.getKey();
+			Injecting setter = mirror.getInjecting(name);
+			setter.inject(t, en.getValue());
+		}
+		return t;
+	}
 }

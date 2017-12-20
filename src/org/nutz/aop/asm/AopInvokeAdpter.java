@@ -34,7 +34,7 @@ class AopInvokeAdpter extends AopMethodAdapter {
             // start of fuck linenumber
             Label tmp = new Label();
             mv.visitLabel(tmp);
-            mv.visitLineNumber(1, tmp);
+            mv.visitLineNumber(i+1, tmp);
             // end of Linenumber
             Method method = methodArray[i];
             mv.visitVarInsn(ILOAD, 1);
@@ -53,7 +53,8 @@ class AopInvokeAdpter extends AopMethodAdapter {
             mv.visitMethodInsn(    INVOKESPECIAL,
                                 enhancedSuperName,
                                 method.getName(),
-                                Type.getMethodDescriptor(method));
+                                Type.getMethodDescriptor(method),
+                                false);
             {
                 returnType = Type.getReturnType(method);
                 if (returnType.equals(Type.VOID_TYPE))

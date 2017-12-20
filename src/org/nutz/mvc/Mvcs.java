@@ -1,6 +1,10 @@
 package org.nutz.mvc;
 
 import java.io.IOException;
+import java.io.Reader;
+import java.io.UnsupportedEncodingException;
+import java.io.Writer;
+import java.net.URLDecoder;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -11,13 +15,14 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
 
+import org.nutz.Nutz;
 import org.nutz.ioc.Ioc;
 import org.nutz.ioc.IocContext;
 import org.nutz.json.Json;
 import org.nutz.json.JsonFormat;
-import org.nutz.lang.Lang;
 import org.nutz.lang.Strings;
 import org.nutz.lang.util.Context;
+import org.nutz.lang.util.NutMap;
 import org.nutz.mvc.config.AtMap;
 import org.nutz.mvc.impl.NutMessageMap;
 import org.nutz.mvc.ioc.SessionIocContext;
@@ -36,15 +41,16 @@ public abstract class Mvcs {
     public static final String MSG = "msg";
     public static final String LOCALE_KEY = "nutz_mvc_localization_key";
 
-    // 这个全局变量用来为 AnnotationIocLoader 添加一个动态加载的包路径
-    // 如果 AnnotationIocLoader 的加载路径值为 $dynamic 则会将启用这个值
-    // 这个值可以是半角逗号或者换行符分隔的多个路径
-    public static String dynamic_ann_paths = null;
-
-    // 这个全局变量用来为 @Modules 添加一个动态模块加载路径
-    // 如果 @Module 的加载路径值为 $dynamic 则会将启用这个值
-    // 这个值可以是半角逗号或者换行符分隔的多个路径
-    public static String dynamic_modules = null;
+    // PS: 如果这个修改导致异常,请报issue,并将这个变量设置为true
+    public static boolean disableFastClassInvoker = false;
+    // 实现显示行号, 如果禁用, 轻微加速启动
+    public static boolean DISPLAY_METHOD_LINENUMBER = true;
+    // 如果一个Resp已经commit过了,那么是否跳过渲染呢
+    public static boolean SKIP_COMMITTED = false;
+    
+    public static boolean DISABLE_X_POWERED_BY = false;
+    
+    public static String X_POWERED_BY = "nutz/"+Nutz.version()+" <nutzam.com>";
 
     // ====================================================================
 
@@ -100,8 +106,7 @@ public abstract class Mvcs {
      * @return 当前会话的本地字符串集合的键值；如果当前 HTTP 会话不存在，则返回 null
      */
     public static String getLocalizationKey() {
-        HttpSession sess = getHttpSession(false);
-        return null == sess ? null : (String) sess.getAttribute(LOCALE_KEY);
+        return (String) getSessionAttrSafe(LOCALE_KEY);
     }
 
     /**
@@ -176,8 +181,7 @@ public abstract class Mvcs {
         if (null != msgss) {
             Map<String, Object> msgs = null;
 
-            String lKey = Strings.sBlank(Mvcs.getLocalizationKey(),
-                                         getDefaultLocalizationKey());
+            String lKey = Strings.sBlank(Mvcs.getLocalizationKey(), getDefaultLocalizationKey());
 
             if (!Strings.isBlank(lKey))
                 msgs = msgss.get(lKey);
@@ -275,12 +279,17 @@ public abstract class Mvcs {
      */
     public static void write(HttpServletResponse resp, Object obj, JsonFormat format)
             throws IOException {
+        write(resp, resp.getWriter(), obj, format);
+    }
+    
+    public static void write(HttpServletResponse resp, Writer writer, Object obj, JsonFormat format)
+            throws IOException {
         resp.setHeader("Cache-Control", "no-cache");
         if (resp.getContentType() == null)
             resp.setContentType("text/plain");
 
         // by mawm 改为直接采用resp.getWriter()的方式直接输出!
-        Json.toJson(resp.getWriter(), obj, format);
+        Json.toJson(writer, obj, format);
 
         resp.flushBuffer();
     }
@@ -319,7 +328,7 @@ public abstract class Mvcs {
      * @return HTTP 请求对象
      */
     public static final HttpServletRequest getReq() {
-        return ctx().reqThreadLocal.get().getAs(HttpServletRequest.class, "req");
+        return reqt().getAs(HttpServletRequest.class, "req");
     }
 
     /**
@@ -328,7 +337,7 @@ public abstract class Mvcs {
      * @return HTTP 响应对象
      */
     public static final HttpServletResponse getResp() {
-        return ctx().reqThreadLocal.get().getAs(HttpServletResponse.class, "resp");
+        return reqt().getAs(HttpServletResponse.class, "resp");
     }
 
     public static final String getName() {
@@ -341,13 +350,13 @@ public abstract class Mvcs {
      * @return Action 执行的上下文
      */
     public static final ActionContext getActionContext() {
-        return ctx().reqThreadLocal.get().getAs(ActionContext.class, "ActionContext");
+        return reqt().getAs(ActionContext.class, "ActionContext");
     }
 
     public static void set(String name, HttpServletRequest req, HttpServletResponse resp) {
         NAME.set(name);
-        ctx().reqThreadLocal.get().set("req", req);
-        ctx().reqThreadLocal.get().set("resp", resp);
+        reqt().set("req", req);
+        reqt().set("resp", resp);
     }
 
     /**
@@ -357,6 +366,9 @@ public abstract class Mvcs {
      *            Servlet 执行的上下文
      */
     public static void setServletContext(ServletContext servletContext) {
+        if (servletContext == null) {
+            Mvcs.servletContext.remove();
+        }
         if (def_servletContext == null)
             def_servletContext = servletContext;
         Mvcs.servletContext.set(servletContext);
@@ -369,7 +381,7 @@ public abstract class Mvcs {
      *            Action 执行的上下文
      */
     public static void setActionContext(ActionContext actionContext) {
-        ctx().reqThreadLocal.get().set("ActionContext", actionContext);
+        reqt().set("ActionContext", actionContext);
     }
 
     /**
@@ -391,7 +403,7 @@ public abstract class Mvcs {
      *            对象装配的上下文环境
      */
     public static void setIocContext(IocContext iocContext) {
-        ctx().reqThreadLocal.get().set("IocContext", iocContext);
+        reqt().set("IocContext", iocContext);
     }
 
     /**
@@ -400,7 +412,7 @@ public abstract class Mvcs {
      * @return 进行对象装配的上下文环境
      */
     public static IocContext getIocContext() {
-        return ctx().reqThreadLocal.get().getAs(IocContext.class, "IocContext");
+        return reqt().getAs(IocContext.class, "IocContext");
     }
 
     // 新的,基于ThreadLoacl改造过的Mvc辅助方法
@@ -449,9 +461,9 @@ public abstract class Mvcs {
      * 重置当前线程所持有的对象
      */
     public static Context resetALL() {
-        Context context = ctx().reqThreadLocal.get();
+        Context context = reqt();
         NAME.set(null);
-        ctx().reqThreadLocal.set(Lang.context());
+        ctx().removeReqCtx();
         return context;
     }
 
@@ -469,9 +481,60 @@ public abstract class Mvcs {
     public static void close() {
         ctx().clear();
         ctx().close();
+        ctx = new NutMvcContext();
     }
-
-    /** 在入口方法调用时,禁止调用1.b.51新加入的FastClass功能 */
-    // PS: 如果这个修改导致异常,请报issue,并将这个变量设置为true
-    public static boolean disableFastClassInvoker = Lang.isAndroid;
+    
+    public static Context reqt() {
+        return ctx().reqCtx();
+    }
+    
+    public static Object getSessionAttrSafe(String key) {
+        try {
+            HttpSession session = getHttpSession(false);
+            return session != null ? session.getAttribute(key) : null;
+        }
+        catch (Exception e) {
+            return false;
+        }
+    }
+    
+    public static void setSessionAttrSafe(String key, Object val, boolean sessionCreate) {
+        try {
+            HttpSession session = getHttpSession(sessionCreate);
+            if (session != null)
+                session.setAttribute(key, val);
+        }
+        catch (Exception e) {
+        }
+    }
+    
+    public static NutMap toParamMap(Reader r, String enc) throws IOException {
+        try {
+            NutMap map = new NutMap();
+            char[] buf = new char[1];
+            StringBuilder sb = new StringBuilder();
+            while (true) {
+                int len = r.read(buf);
+                if (len == 0)
+                    continue;
+                if (buf[0] == '&' || len < 0) {
+                    String[] tmp = sb.toString().split("=");
+                    if (tmp != null && tmp.length == 2) {
+                        map.put(URLDecoder.decode(tmp[0], enc), URLDecoder.decode(tmp[1], enc));
+                    }
+                    if (len < 0)
+                        break;
+                    sb.setLength(0);
+                } else {
+                    sb.append(buf[0]);
+                }
+            }
+            return map;
+        }
+        catch (UnsupportedEncodingException e) {
+            throw new IOException(e);
+        }
+    }
+    
+    
 }
